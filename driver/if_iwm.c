@@ -339,12 +339,15 @@ static struct ieee80211vap *
 		               const uint8_t [IEEE80211_ADDR_LEN],
 		               const uint8_t [IEEE80211_ADDR_LEN]);
 static void	iwm_vap_delete(struct ieee80211vap *);
+
+static void	iwm_attach_scan(struct ieee80211com *);
 static void	iwm_scan_start(struct ieee80211com *);
 static void	iwm_scan_end(struct ieee80211com *);
-static void	iwm_update_mcast(struct ieee80211com *);
 static void	iwm_set_channel(struct ieee80211com *);
 static void	iwm_scan_curchan(struct ieee80211_scan_state *, unsigned long);
 static void	iwm_scan_mindwell(struct ieee80211_scan_state *);
+
+static void	iwm_update_mcast(struct ieee80211com *);
 static int	iwm_detach(device_t);
 
 /*
@@ -4869,6 +4872,7 @@ iwm_preinit(void *arg)
 	 * At this point we've committed - if we fail to do setup,
 	 * we now also have to tear down the net80211 state.
 	 */
+	iwm_attach_scan(ic);
 	ieee80211_ifattach(ic, sc->sc_bssid);
 	ic->ic_vap_create = iwm_vap_create;
 	ic->ic_vap_delete = iwm_vap_delete;
@@ -4958,6 +4962,258 @@ iwm_vap_delete(struct ieee80211vap *vap)
 	free(ivp, M_80211_VAP);
 }
 
+/* Scan code */
+static void
+iwm_scan_op_attach(struct ieee80211com *ic)
+{
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+	struct ieee80211_scan_state *ss;
+
+	/* Have to allocate memory for the scan engine */
+	ss = IEEE80211_MALLOC(sizeof(struct ieee80211_scan_state),
+	    M_80211_SCAN, IEEE80211_M_NOWAIT | IEEE80211_M_ZERO);
+	if (ss == NULL) {
+		/* XXX handle better? */
+		ic->ic_scan = NULL;
+		return;
+	}
+	ic->ic_scan = ss;
+	ss->ss_ic = ic;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+}
+
+static void
+iwm_scan_op_detach(struct ieee80211com *ic)
+{
+
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+	struct ieee80211_scan_state *ss = ic->ic_scan;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+
+	if (ss == NULL)
+		return;
+	if (ss->ss_ops != NULL) {
+		ss->ss_ops->scan_detach(ss);
+		ss->ss_ops = NULL;
+	}
+	ic->ic_scan = NULL;
+	IEEE80211_FREE(ss, M_80211_SCAN);
+}
+
+static void
+iwm_scan_op_vattach(struct ieee80211vap *vap)
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+}
+
+static void
+iwm_scan_op_vdetach(struct ieee80211vap *vap)
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+}
+
+static void
+iwm_scan_op_set_duration(struct ieee80211vap *vap, u_int duration)
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+}
+
+static int
+iwm_scan_op_start_scan(const struct ieee80211_scanner *ss,
+    struct ieee80211vap *vap,
+    int flags,
+    u_int duration,
+    u_int mindwell,
+    u_int maxdwell,
+    u_int n_ssid,
+    const struct ieee80211_scan_ssid ssids[])
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+
+	return (0);
+}
+
+/*
+ * Check if a scan is required.
+ *
+ * If the scan cache is fresh, just use that; notify
+ * a scan is done if we're not scanning.
+ *
+ * Otherwise, just kick off a scan.
+ *
+ * This is called with the comlock held.
+ */
+static int
+iwm_scan_op_check_scan(const struct ieee80211_scanner *ss,
+    struct ieee80211vap *vap,
+    int flags,
+    u_int duration,
+    u_int mindwell,
+    u_int maxdwell,
+    u_int n_ssid,
+    const struct ieee80211_scan_ssid ssids[])
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+
+	return (0);
+}
+
+static int
+iwm_scan_op_bg_scan(const struct ieee80211_scanner *ss,
+    struct ieee80211vap *vap, int flags)
+{
+
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+
+	return (0);
+}
+
+static void
+iwm_scan_op_cancel_scan(struct ieee80211vap *vap)
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	/* XXX TODO */
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+}
+
+static void
+iwm_scan_op_cancel_anyscan(struct ieee80211vap *vap)
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+}
+
+static void
+iwm_scan_op_scan_next(struct ieee80211vap *vap)
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+}
+
+static void
+iwm_scan_op_scan_done(struct ieee80211vap *vap)
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+}
+
+static void
+iwm_scan_op_probe_curchan(struct ieee80211vap *vap, int force)
+{
+
+	/*
+	 * We don't do our own probing; that's done by
+	 * the firmware during scanning.
+	 */
+
+	struct ieee80211com *ic = vap->iv_ic;
+	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+
+	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+	    "%s: called\n",
+	    __func__);
+
+}
+
+static void
+iwm_scan_op_add_scan(struct ieee80211vap *vap, struct ieee80211_channel *chan,
+    const struct ieee80211_scanparams *sp,
+    const struct ieee80211_frame *wh,
+    int subtype, int rssi, int noise)
+{
+	struct ieee80211com *ic = vap->iv_ic;
+	struct ieee80211_scan_state *ss = ic->ic_scan;
+
+	/* XXX TODO: dump beacon contents */
+
+	if (ss->ss_ops == NULL)
+		return;
+
+	/* Just call the net80211 method */
+	ss->ss_ops->scan_add(ss, chan, sp, wh, subtype, rssi, noise);
+}
+
+static struct ieee80211_scan_methods iwm_scan_methods = {
+	.sc_attach = iwm_scan_op_attach,
+	.sc_detach = iwm_scan_op_detach,
+	.sc_vattach = iwm_scan_op_vattach,
+	.sc_vdetach = iwm_scan_op_vdetach,
+	.sc_set_scan_duration = iwm_scan_op_set_duration,
+	.sc_start_scan = iwm_scan_op_start_scan,
+	.sc_check_scan = iwm_scan_op_check_scan,
+	.sc_bg_scan = iwm_scan_op_bg_scan,
+	.sc_cancel_scan = iwm_scan_op_cancel_scan,
+	.sc_cancel_anyscan = iwm_scan_op_cancel_anyscan,
+	.sc_scan_next = iwm_scan_op_scan_next,
+	.sc_scan_done = iwm_scan_op_scan_done,
+	.sc_scan_probe_curchan = iwm_scan_op_probe_curchan,
+	.sc_add_scan = iwm_scan_op_add_scan,
+};
+
+static void
+iwm_attach_scan(struct ieee80211com *ic)
+{
+
+	/* XXX TODO; methodize */
+	ic->ic_scan_methods = &iwm_scan_methods;
+}
+
+/*
+ * XXX TODO: this needs to go away, and also use sensible
+ * locking.
+ */
 static void
 iwm_scan_start(struct ieee80211com *ic)
 {
