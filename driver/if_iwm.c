@@ -4961,6 +4961,39 @@ iwm_vap_delete(struct ieee80211vap *vap)
 }
 
 /* Scan code */
+
+static int
+_iwm_scan_start(struct ieee80211com *ic)
+{
+	struct ieee80211vap *vap = TAILQ_FIRST(&ic->ic_vaps);
+        struct iwm_softc *sc = ic->ic_ifp->if_softc;
+	int error;
+
+	if (sc->sc_scanband)
+		return (0);
+	IWM_LOCK(sc);
+	error = iwm_mvm_scan_request(sc, IEEE80211_CHAN_2GHZ, 0, NULL, 0);
+	if (error) {
+		device_printf(sc->sc_dev, "could not initiate scan\n");
+		IWM_UNLOCK(sc);
+		ieee80211_cancel_scan(vap);
+		return (0);
+	}
+
+	IWM_UNLOCK(sc);
+	return (1);
+}
+
+/*
+ * Finish a scan - if we're transitioning to finish,
+ * then do the net80211 juggling required and clear the F_SCAN flag.
+ */
+static void
+_iwm_scan_op_finish(struct ieee80211vap *vap)
+{
+
+}
+
 static void
 iwm_scan_op_attach(struct ieee80211com *ic)
 {
@@ -5037,8 +5070,15 @@ iwm_scan_op_set_duration(struct ieee80211vap *vap, u_int duration)
 	    __func__);
 }
 
+/*
+ * Start a scan if one hasn't been started.
+ *
+ * This may be called with the comlock held; we should
+ * double-check this and figure out how to make the
+ * locking consistent.
+ */
 static int
-iwm_scan_op_start_scan(const struct ieee80211_scanner *ss,
+iwm_scan_op_start_scan(const struct ieee80211_scanner *scan,
     struct ieee80211vap *vap,
     int flags,
     u_int duration,
@@ -5049,12 +5089,63 @@ iwm_scan_op_start_scan(const struct ieee80211_scanner *ss,
 {
 	struct ieee80211com *ic = vap->iv_ic;
 	struct iwm_softc *sc = ic->ic_ifp->if_softc;
+	struct ieee80211_scan_state *ss = ic->ic_scan;
+	int kick_scan = 0;
+	int retval = 0;
 
 	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
 	    "%s: called\n",
 	    __func__);
+	/* XXX TODO: assert unlocked once we know..*/
 
-	return (0);
+	IEEE80211_LOCK(ic);
+	/*
+	 * XXX this is duplicate code from net80211 swscan;
+	 * XXX todo: refactor this out.
+	 */
+	if (ic->ic_flags & IEEE80211_F_CSAPENDING) {
+		IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+		    "%s: called; CSA pending\n",
+		    __func__);
+		retval = 0;
+		goto finish;
+	} else if (ic->ic_flags & IEEE80211_F_SCAN) {
+		IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
+		    "%s: called; already scanning\n",
+		    __func__);
+		retval = 0;
+		goto finish;
+	}
+
+	/* XXX debugging output */
+	ieee80211_scan_update_locked(vap, scan);
+	if (ss->ss_ops != NULL) {
+		/* XXX counters */
+		if (flags & IEEE80211_SCAN_FLUSH)
+			ss->ss_ops->scan_flush(ss);
+		if (flags & IEEE80211_SCAN_BGSCAN)
+			ic->ic_flags_ext |= IEEE80211_FEXT_BGSCAN;
+
+		/* XXX scan duration? */
+		ss->ss_next = 0;
+		ss->ss_mindwell = mindwell;
+		ss->ss_maxdwell = maxdwell;
+
+		ic->ic_flags |= IEEE80211_F_SCAN;
+		kick_scan = 1;
+	}
+finish:
+	IEEE80211_UNLOCK(ic);
+
+	/*
+	 * Outside of holding any locks - kick-start the driver scan.
+	 */
+	if (kick_scan) {
+		_iwm_scan_start(ic);
+		retval = 1;
+	}
+
+	return (retval);
 }
 
 /*
@@ -5083,6 +5174,11 @@ iwm_scan_op_check_scan(const struct ieee80211_scanner *ss,
 	IWM_DPRINTF(sc, IWM_DEBUG_TRACE,
 	    "%s: called\n",
 	    __func__);
+	IEEE80211_LOCK_ASSERT(ic);
+
+	/* For now, just kick off a replacement scan */
+	return iwm_scan_op_start_scan(ss, vap, flags, duration,
+	    mindwell, maxdwell, n_ssid, ssids);
 
 	return (0);
 }
@@ -5215,20 +5311,8 @@ iwm_attach_scan(struct ieee80211com *ic)
 static void
 iwm_scan_start(struct ieee80211com *ic)
 {
-	struct ieee80211vap *vap = TAILQ_FIRST(&ic->ic_vaps);
-        struct iwm_softc *sc = ic->ic_ifp->if_softc;
-	int error;
 
-	if (sc->sc_scanband)
-		return;
-	IWM_LOCK(sc);
-	error = iwm_mvm_scan_request(sc, IEEE80211_CHAN_2GHZ, 0, NULL, 0);
-	if (error) {
-		device_printf(sc->sc_dev, "could not initiate scan\n");
-		IWM_UNLOCK(sc);
-		ieee80211_cancel_scan(vap);
-	} else
-		IWM_UNLOCK(sc);
+	(void) _iwm_scan_start(ic);
 }
 
 static void
